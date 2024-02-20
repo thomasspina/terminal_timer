@@ -2,7 +2,7 @@
 // TODO : add save when exiting
 
 use std::{
-    io::{self, stdout, Write},
+    io::{self, stdout, Write, Stdout},
     process::exit,
     time::{Duration, SystemTime}
 };
@@ -13,6 +13,8 @@ use crossterm::{
     terminal::{enable_raw_mode, disable_raw_mode},
     QueueableCommand
 };
+
+use colored::Colorize;
 
 struct TimeUnits {
     h: u8,
@@ -28,6 +30,28 @@ fn get_time_units(s: u64) -> TimeUnits {
     }
 }
 
+fn get_timer_string(s: u64) -> String {
+    let time_units: TimeUnits = get_time_units(s);
+
+    let h_0: char = if time_units.h < 10 {'0'} else {0 as char};
+    let s_0: char = if time_units.s < 10 {'0'} else {0 as char};
+    let m_0: char = if time_units.m < 10 {'0'} else {0 as char};
+
+    format!("{}{}:{}{}:{}{}", 
+        h_0, time_units.h, m_0, time_units.m, s_0, time_units.s)
+}
+
+fn wipe_screen(stdout: &mut Stdout) {
+    // get width of terminal window in columns
+    if let Some((w, h)) = term_size::dimensions() {
+        // for loop in ordered to wipe clean every line
+        for _ in 1..(h - cursor::position().unwrap().1 as usize) {
+            print!("{}\n", " ".repeat(w)); // wipe clean the line
+        }
+        _ = stdout.queue(cursor::RestorePosition);
+    }
+}
+
 fn main() -> io::Result<()> {
     let mut paused: bool = false;
     let mut s_work: u64 = 0;
@@ -40,38 +64,26 @@ fn main() -> io::Result<()> {
     loop {
         match now.elapsed() {
             Ok(elapsed) => {
+                stdout.queue(cursor::RestorePosition)?;
+                wipe_screen(&mut stdout);
+
                 if !paused {
                     s_work = &elapsed.as_secs() - s_pause;
-                    let time_units: TimeUnits = get_time_units(s_work);
-                    stdout.queue(cursor::RestorePosition)?;
-                    
-                    // get width of terminal window in columns
-                    if let Some((w, h)) = term_size::dimensions() {
-                        // for loop in ordered to wipe clean every line
-                        for _ in 1..(h - cursor::position().unwrap().1 as usize) {
-                            print!("{}\n", " ".repeat(w)); // wipe clean the line
-                        }
-                    }
-    
-                    stdout.queue(cursor::RestorePosition)?;
-                    
-                    // add a zero in front if below ten
-                    let h_0: char = if time_units.h < 10 {'0'} else {0 as char};
-                    let s_0: char = if time_units.s < 10 {'0'} else {0 as char};
-                    let m_0: char = if time_units.m < 10 {'0'} else {0 as char};
-    
-                    print!("\r{}{}:{}{}:{}{}", 
-                            h_0, time_units.h, m_0, time_units.m, s_0, time_units.s);
-                    stdout.flush().unwrap();
                 } else {
                     s_pause = &elapsed.as_secs() - s_work;
                 }
+
+                print!("{} {}\n{} {}",
+                    "Work:".bold().white(),
+                    get_timer_string(s_work).truecolor(190, 190, 190),
+                    "Play:".bold().truecolor(0, 0, 0).on_truecolor(249, 109, 0), 
+                    get_timer_string(s_pause).truecolor(190, 190, 190));
+                stdout.flush().unwrap();
             }
             Err(e) => {
                 println!("Error: {e:?}");
             }
         }
-        
         
         // check for key presses
         enable_raw_mode()?;
@@ -80,8 +92,6 @@ fn main() -> io::Result<()> {
 
             if event == Event::Key(KeyCode::Char('p').into()) {
                 paused = !paused;
-                // TODO
-                    // toggle over to other time and start adding seconds there
             }
 
             if event == Event::Key(KeyCode::Char('q').into()) {
