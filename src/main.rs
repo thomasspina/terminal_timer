@@ -1,10 +1,9 @@
-// TODO : fix position bug where when resising, the timer moves
-// TODO : add save when exiting
-
 use std::{
-    io::{self, stdout, Write, Stdout},
-    process::exit,
-    time::{Duration, SystemTime}
+    fs::{self, OpenOptions}, 
+    io::{self, stdout, Stdout, Write}, 
+    path::PathBuf, 
+    process::exit, 
+    time::{Duration, SystemTime, UNIX_EPOCH}
 };
 
 use crossterm::{
@@ -15,6 +14,7 @@ use crossterm::{
 };
 
 use colored::Colorize;
+use dirs;
 
 struct TimeUnits {
     h: u8,
@@ -53,12 +53,30 @@ fn wipe_screen(stdout: &mut Stdout) {
 }
 
 fn main() -> io::Result<()> {
+    // create support file
+    let home_dir_path = dirs::home_dir();
+    let mut support_file_path: Option<PathBuf> = None;
+    match home_dir_path {
+        Some(mut val) => {
+            val.push(".timer_data");
+
+            if !fs::metadata(&val).is_ok() {
+                let file = fs::File::create(&val)?; // create data file
+                let mut wtr = csv::Writer::from_writer(file);
+                wtr.write_record(&["Work", "Play", "End"])?;
+                wtr.flush()?;
+
+                support_file_path = Some(val);
+            }
+        },
+        None => { eprintln!("HOME directory not found in $PATH. Timer data cannot be saved."); }
+    }
+
     let mut paused: bool = false;
     let mut s_work: u64 = 0;
     let mut s_pause: u64 = 0;
-    
-    let now = SystemTime::now();
     let mut stdout = stdout();
+    let now = SystemTime::now();
 
     stdout.queue(cursor::SavePosition)?; 
     loop {
@@ -87,7 +105,7 @@ fn main() -> io::Result<()> {
         
         // check for key presses
         enable_raw_mode()?;
-        if poll(Duration::from_millis(1_000))? {
+        if poll(Duration::from_millis(1_000))? { // acts as the "sleep"
             let event = read()?;
 
             if event == Event::Key(KeyCode::Char('p').into()) {
@@ -95,8 +113,31 @@ fn main() -> io::Result<()> {
             }
 
             if event == Event::Key(KeyCode::Char('q').into()) {
+                let time_stamp = SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_secs();
+
+                match support_file_path {
+                    Some(val) => {
+                        let file = OpenOptions::new()
+                                            .write(true)
+                                            .append(true)
+                                            .open(&val)?;
+
+                        let mut wtr = csv::Writer::from_writer(file);
+                        wtr.write_record(&[s_work.to_string(), s_pause.to_string(), time_stamp.to_string()])?;
+                        wtr.flush()?;
+                    }
+                    _ => {}
+                }
+
                 disable_raw_mode()?;
                 exit(0);
+            }
+
+            if event == Event::Key(KeyCode::Char('h').into()) {
+                // Print help until h pressed again
             }
         }
         disable_raw_mode()?;
