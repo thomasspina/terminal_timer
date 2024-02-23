@@ -281,7 +281,7 @@ fn main() {
                     }
 
                 }
-                None => { /* Get yesterday's values */ }
+                None => { println!("No days provided"); }
             }
         }
         Some(("start", _)) => {
