@@ -16,7 +16,7 @@ use crossterm::{
 use clap::{Arg, Command};
 use colored::Colorize;
 use dirs;
-use chrono;
+use chrono::{Utc, NaiveDate, DateTime, Local};
 
 struct TimeUnits {
     h: u8,
@@ -59,33 +59,42 @@ fn cli() -> Command {
         .version("0.1.0")
         .author("Thomas Spina <thomas@thomasspina.com>")
         .about("Simple work timer that tracks history")
+        .subcommand(Command::new("today")
+                .short_flag('t')
+                .long_flag("td")
+                .about("Gets today's performance data."))
         .subcommand(Command::new("start")
                 .short_flag('s')
                 .long_flag("start")
                 .about("Starts the timer. Press 'p' to pause and 'q' to quit."))
-        .subcommand(Command::new("yesterday")
-                .short_flag('y')
-                .long_flag("yd")
-                .about("Gets yesterday's performance data."))      
-        .subcommand(Command::new("lastweek")
-                .short_flag('w')
-                .long_flag("lw")
-                .about("Gets last week's performance data."))
-        .subcommand(Command::new("lastmonth")
-                .short_flag('m')
-                .long_flag("lm")
-                .about("Gets last month's performance data."))
         .subcommand(Command::new("lastxdays")
                 .short_flag('x')
                 .long_flag("lx")
                 .about("Gets last x days' performance data.")
-                .arg(Arg::new("days")))
-        .subcommand(Command::new("range")
-                .short_flag('r')
-                .long_flag("range")
-                .about("Gets performance data for a range of days inclusive. Dates should be in the format YYYY-MM-DD.")
-                .arg(Arg::new("start"))
-                .arg(Arg::new("end")))
+                .arg(Arg::new("days").num_args(1))
+                .arg(Arg::new("sum")
+                        .short('s')
+                        .long("sum")
+                        .num_args(0)))
+}
+
+fn unix_to_local_date(unix_time: i64) -> String {
+    let utc_datetime: DateTime<Utc> = DateTime::<Utc>::from_timestamp(unix_time, 0).unwrap();
+    let local_datetime: DateTime<Local> = utc_datetime.with_timezone(&Local);
+    local_datetime.format("%Y-%m-%d").to_string()
+}
+
+fn is_last_x_days(x: usize, date_str: String) -> i64 {
+    let today = Local::now().naive_local().date();
+    let date_x_days_before_today = today - chrono::Duration::days(x.try_into().unwrap());
+
+    let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").unwrap();
+
+    if date <= today && date >= date_x_days_before_today {
+        return today.signed_duration_since(date).num_days();
+    }
+
+    return -1;
 }
 
 fn start_timer(support_file_path: Option<PathBuf>) -> io::Result<()> {
@@ -160,10 +169,6 @@ fn start_timer(support_file_path: Option<PathBuf>) -> io::Result<()> {
     }
 }
 
-fn unix_epoch_to_date_string(s: u64) -> String {
-    let date_time = chrono::NaiveDateTime::from_timestamp_opt(s as i64, 0).unwrap();
-    date_time.format("%Y-%m-%d").to_string()
-}
 fn main() {
     // create support file
     let home_dir_path: Option<PathBuf> = dirs::home_dir();
@@ -188,41 +193,96 @@ fn main() {
     }
 
     match cli().get_matches().subcommand() {
-        Some(("yesterday", _)) => {
-            // TODO : UNIX_EPOCH not local time ? Probably wanna save local time
-
+        Some(("today", _)) => {
             match support_file_path {
-                Some(ref val) => {
-                    let file = fs::File::open(&val).unwrap();
+                Some(val) => {
+                    let file: fs::File = OpenOptions::new()
+                                        .read(true)
+                                        .open(&val)
+                                        .unwrap();
+                    
+                    let today: NaiveDate = Local::now().naive_local().date();
+                    let today_str: String = today.format("%Y-%m-%d").to_string();
+                    
                     let mut rdr = csv::Reader::from_reader(file);
-
-
+                    let mut total: (u64, u64) = (0, 0);
                     for result in rdr.records() {
-                        match result {
-                            Ok(record) => {
-                                let end: u64 = record[2].parse().unwrap();
-                                let date = unix_epoch_to_date_string(end);
-                                println!("{}", date)
-                            }
-                            Err(e) => { eprintln!("Error: {e:?}"); }
+                        let record = result.unwrap();
+                        let end_date: String = unix_to_local_date(record[2].parse().unwrap());
+
+                        if end_date != today_str {
+                            continue;
                         }
+
+                        total.0 += &record[0].parse().unwrap();
+                        total.1 += &record[1].parse().unwrap();
                     }
+
+                    println!("{}: {}  {}: {}", 
+                            "Work".bold().bright_white(),
+                            get_timer_string(total.0), 
+                            "Play".bold().bright_white(),
+                            get_timer_string(total.1));
                 }
-                None => { eprintln!("No support file found. Timer data cannot be saved."); }
+                None => { eprintln!("No support file found."); }
             }
-            
         }
-        Some(("lastweek", _)) => {
-            // TODO : get last week's data
-        }
-        Some(("lastmonth", _)) => {
-            // TODO : get last month's data
-        }
-        Some(("lastxdays", _)) => {
-            // TODO : get last x days' data
-        }
-        Some(("range", _)) => {
-            // TODO : get range of days' data
+        Some(("lastxdays", args)) => {
+            match args.get_one::<String>("days") {
+                Some(x) => {
+                    match x.parse::<usize>() {
+                        Ok(num) => { 
+                            match support_file_path {
+                                Some(val) => {
+                                    let file: fs::File = OpenOptions::new()
+                                        .read(true)
+                                        .open(&val)
+                                        .unwrap();
+
+                                    let mut arr: Vec<(u64, u64)> = vec![(0, 0); num];
+                                    let mut rdr = csv::Reader::from_reader(file);
+                                    for record in rdr.records() {
+                                        let result = record.unwrap();
+                                        let date = unix_to_local_date(result[2].parse().unwrap());
+                                        
+                                        let i: i64 = is_last_x_days(num, date);
+                                        if i > -1 { // if day in last_x_days
+                                            arr[i as usize].0 += result[0].parse::<u64>().unwrap(); // work
+                                            arr[i as usize].1 += result[1].parse::<u64>().unwrap(); // play
+                                        }
+                                    }
+                                    
+                                    if *args.get_one::<bool>("sum").unwrap() {
+                                        let mut sum: (u64, u64) = (0, 0);
+                                        for tup in arr.iter() {
+                                            sum.0 += tup.0;
+                                            sum.1 += tup.1;
+                                        }
+                                        println!("{}: {}  {}: {}",
+                                                    "Work".bold(),
+                                                    get_timer_string(sum.0),
+                                                    "Play".bold(),
+                                                    get_timer_string(sum.1));
+                                    } else {
+                                        for (i, tup) in arr.iter().enumerate() {
+                                            println!("{} {}: {}  {}: {}",
+                                                    i,
+                                                    "Work".bold(),
+                                                    get_timer_string(tup.0),
+                                                    "Play".bold(),
+                                                    get_timer_string(tup.1));
+                                        }
+                                    }
+                                }
+                                None => { eprintln!("No support file found."); }
+                            }
+                        }
+                        Err(e) => { println!("Provide valid number: {}", e) }
+                    }
+
+                }
+                None => { /* Get yesterday's values */ }
+            }
         }
         Some(("start", _)) => {
             match start_timer(support_file_path) {
