@@ -245,7 +245,7 @@ fn main() {
                                         let result = record.unwrap();
                                         let date = unix_to_local_date(result[2].parse().unwrap());
                                         
-                                        let i: i64 = is_last_x_days(num, date);
+                                        let i: i64 = is_last_x_days(num, date) - 1;
                                         if i > -1 { // if day in last_x_days
                                             arr[i as usize].0 += result[0].parse::<u64>().unwrap(); // work
                                             arr[i as usize].1 += result[1].parse::<u64>().unwrap(); // play
